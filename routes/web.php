@@ -18,4 +18,30 @@ Route::middleware(['auth'])->group(function () {
     Route::delete('invitations/{invitation}', [TeamInvitationController::class, 'decline'])->name('invitations.decline');
 });
 
+Route::get('/latihan-php', function () {
+    $nama = 'Shalsabyla Finta Azalea';
+    $nilai = request()->query('uji') === 'perbaikan'
+        ? [60, 65, 70, 68, 72]
+        : [80, 75, 90, 85, 95];
+
+    $hitungRataRata = function (array $data): float {
+        $total = 0;
+        foreach ($data as $angka) {
+            $total += $angka;
+        }
+        return $total / count($data);
+    };
+
+    $rataRata = $hitungRataRata($nilai);
+    if ($rataRata >= 75) {
+        $status = 'Lulus';
+    } else {
+        $status = 'Perlu Perbaikan';
+    }
+
+    return view('latihan-php', compact(
+        'nama', 'nilai', 'rataRata', 'status'
+    ));
+});
+
 require __DIR__.'/settings.php';
