@@ -353,4 +353,288 @@ Route::delete('/mahasiswa/{id}', function (int $id) {
     }
 })->name('mahasiswa.destroy');
 
+/**
+ * ============================================================================
+ * STUDI KASUS PRAKTIKUM PEMROGRAMAN WEB (MODUL 1 - MODUL 7)
+ * TIPE B: SISTEM INVENTARIS LABORATORIUM
+ * Mahasiswa: Shalsabyla Finta Azalea (NIM: 2401020167)
+ * ============================================================================
+ */
+
+if (! function_exists('statusUsiaAset')) {
+    /**
+     * Menentukan status usia aset berdasarkan tahun perolehan.
+     * Mengembalikan 'Baru' jika tahun >= 2023 dan 'Lama' jika di bawahnya.
+     */
+    function statusUsiaAset(int $tahun): string
+    {
+        return $tahun >= 2023 ? 'Baru' : 'Lama';
+    }
+}
+
+Route::get('/inventaris', function (Request $request) {
+    $kataKunci = trim((string) $request->query('q', ''));
+    $ruangId = $request->query('ruang_id', '');
+
+    try {
+        $pdo = DB::connection()->getPdo();
+
+        $sql = 'SELECT i.id, i.kode_barang, i.nama_barang, i.nomor_aset,
+                       i.tahun_perolehan, i.ruang_id, r.nama_ruang
+                FROM inventaris AS i
+                JOIN ruang AS r ON r.id = i.ruang_id
+                WHERE 1 = 1';
+        $parameter = [];
+
+        // Pencarian memeriksa 3 kolom: kode_barang, nama_barang, dan nomor_aset
+        if ($kataKunci !== '') {
+            $sql .= ' AND (i.kode_barang LIKE :kata_kunci_kode
+                      OR i.nama_barang LIKE :kata_kunci_nama
+                      OR i.nomor_aset LIKE :kata_kunci_aset)';
+            $nilaiPencarian = '%'.$kataKunci.'%';
+            $parameter['kata_kunci_kode'] = $nilaiPencarian;
+            $parameter['kata_kunci_nama'] = $nilaiPencarian;
+            $parameter['kata_kunci_aset'] = $nilaiPencarian;
+        }
+
+        // Filter berdasarkan tabel master ruang
+        if ($ruangId !== '') {
+            $sql .= ' AND i.ruang_id = :ruang_id';
+            $parameter['ruang_id'] = (int) $ruangId;
+        }
+
+        $sql .= ' ORDER BY i.kode_barang ASC';
+        $ambilInventaris = $pdo->prepare($sql);
+        $ambilInventaris->execute($parameter);
+        $daftarInventaris = $ambilInventaris->fetchAll(\PDO::FETCH_ASSOC);
+
+        $ambilRuang = $pdo->prepare('SELECT id, nama_ruang FROM ruang ORDER BY nama_ruang ASC');
+        $ambilRuang->execute();
+        $daftarRuang = $ambilRuang->fetchAll(\PDO::FETCH_ASSOC);
+
+        return view('inventaris', compact('daftarInventaris', 'daftarRuang', 'kataKunci', 'ruangId'));
+    } catch (\Throwable $error) {
+        report($error);
+
+        return response('Data inventaris tidak dapat dibaca. Periksa koneksi dan query.', 500);
+    }
+})->name('inventaris.index');
+
+Route::post('/inventaris', function (Request $request) {
+    $request->merge([
+        'kode_barang' => strtoupper(strip_tags(trim((string) $request->input('kode_barang')))),
+        'nama_barang' => strip_tags(trim((string) $request->input('nama_barang'))),
+        'nomor_aset' => strip_tags(trim((string) $request->input('nomor_aset'))),
+        'tahun_perolehan' => trim((string) $request->input('tahun_perolehan')),
+        'ruang_id' => trim((string) $request->input('ruang_id')),
+    ]);
+
+    $data = $request->validate([
+        'kode_barang' => ['required', 'string', 'size:10', 'regex:/^[A-Za-z0-9]{10}$/'],
+        'nama_barang' => ['required', 'string', 'min:3', 'max:100'],
+        'nomor_aset' => ['required', 'string', 'min:5', 'max:30'],
+        'tahun_perolehan' => ['required', 'integer', 'between:2000,2026'],
+        'ruang_id' => ['required', 'integer', 'exists:ruang,id'],
+    ], [
+        'kode_barang.required' => 'Kode barang wajib diisi.',
+        'kode_barang.size' => 'Kode barang harus tepat 10 karakter.',
+        'kode_barang.regex' => 'Kode barang harus berupa 10 karakter alfanumerik.',
+        'nama_barang.required' => 'Nama barang wajib diisi.',
+        'nama_barang.min' => 'Nama barang minimal 3 karakter.',
+        'nama_barang.max' => 'Nama barang maksimal 100 karakter.',
+        'nomor_aset.required' => 'Nomor aset wajib diisi.',
+        'nomor_aset.min' => 'Nomor aset minimal 5 karakter.',
+        'nomor_aset.max' => 'Nomor aset maksimal 30 karakter.',
+        'tahun_perolehan.required' => 'Tahun perolehan wajib diisi.',
+        'tahun_perolehan.integer' => 'Tahun perolehan harus berupa angka.',
+        'tahun_perolehan.between' => 'Tahun perolehan harus berada di antara tahun 2000 dan 2026.',
+        'ruang_id.required' => 'Ruang laboratorium wajib dipilih.',
+        'ruang_id.exists' => 'Ruang laboratorium yang dipilih tidak tersedia.',
+    ]);
+
+    try {
+        $pdo = DB::connection()->getPdo();
+
+        $cekDuplikat = $pdo->prepare(
+            'SELECT COUNT(*) FROM inventaris WHERE kode_barang = :kode_barang OR nomor_aset = :nomor_aset'
+        );
+        $cekDuplikat->execute([
+            'kode_barang' => $data['kode_barang'],
+            'nomor_aset' => $data['nomor_aset'],
+        ]);
+
+        if ((int) $cekDuplikat->fetchColumn() > 0) {
+            return back()
+                ->withInput()
+                ->with('gagal', 'Kode barang atau nomor aset sudah terdaftar.');
+        }
+
+        $simpan = $pdo->prepare(
+            'INSERT INTO inventaris (kode_barang, nama_barang, nomor_aset, tahun_perolehan, ruang_id)
+             VALUES (:kode_barang, :nama_barang, :nomor_aset, :tahun_perolehan, :ruang_id)'
+        );
+        $simpan->execute([
+            'kode_barang' => $data['kode_barang'],
+            'nama_barang' => $data['nama_barang'],
+            'nomor_aset' => $data['nomor_aset'],
+            'tahun_perolehan' => $data['tahun_perolehan'],
+            'ruang_id' => $data['ruang_id'],
+        ]);
+
+        return redirect()
+            ->route('inventaris.index')
+            ->with('berhasil', 'Data inventaris berhasil ditambahkan.');
+    } catch (\Throwable $error) {
+        report($error);
+
+        return back()
+            ->withInput()
+            ->with('gagal', 'Data gagal disimpan. Periksa koneksi dan data.');
+    }
+})->name('inventaris.store');
+
+Route::get('/inventaris/{id}/edit', function (int $id) {
+    try {
+        $pdo = DB::connection()->getPdo();
+        $ambilInventaris = $pdo->prepare(
+            'SELECT id, kode_barang, nama_barang, nomor_aset, tahun_perolehan, ruang_id
+             FROM inventaris WHERE id = :id'
+        );
+        $ambilInventaris->execute(['id' => $id]);
+        $inventaris = $ambilInventaris->fetch(\PDO::FETCH_ASSOC);
+
+        if (! $inventaris) {
+            return redirect()->route('inventaris.index')->with(
+                'gagal',
+                'Data inventaris tidak ditemukan.'
+            );
+        }
+
+        $ambilRuang = $pdo->prepare('SELECT id, nama_ruang FROM ruang ORDER BY nama_ruang ASC');
+        $ambilRuang->execute();
+        $daftarRuang = $ambilRuang->fetchAll(\PDO::FETCH_ASSOC);
+
+        return view('inventaris-edit', compact('inventaris', 'daftarRuang'));
+    } catch (\Throwable $error) {
+        report($error);
+
+        return redirect()->route('inventaris.index')->with(
+            'gagal',
+            'Data gagal dibuka untuk diubah.'
+        );
+    }
+})->name('inventaris.edit');
+
+Route::put('/inventaris/{id}', function (Request $request, int $id) {
+    $request->merge([
+        'kode_barang' => strtoupper(strip_tags(trim((string) $request->input('kode_barang')))),
+        'nama_barang' => strip_tags(trim((string) $request->input('nama_barang'))),
+        'nomor_aset' => strip_tags(trim((string) $request->input('nomor_aset'))),
+        'tahun_perolehan' => trim((string) $request->input('tahun_perolehan')),
+        'ruang_id' => trim((string) $request->input('ruang_id')),
+    ]);
+
+    $data = $request->validate([
+        'kode_barang' => ['required', 'string', 'size:10', 'regex:/^[A-Za-z0-9]{10}$/'],
+        'nama_barang' => ['required', 'string', 'min:3', 'max:100'],
+        'nomor_aset' => ['required', 'string', 'min:5', 'max:30'],
+        'tahun_perolehan' => ['required', 'integer', 'between:2000,2026'],
+        'ruang_id' => ['required', 'integer', 'exists:ruang,id'],
+    ], [
+        'kode_barang.required' => 'Kode barang wajib diisi.',
+        'kode_barang.size' => 'Kode barang harus tepat 10 karakter.',
+        'kode_barang.regex' => 'Kode barang harus berupa 10 karakter alfanumerik.',
+        'nama_barang.required' => 'Nama barang wajib diisi.',
+        'nama_barang.min' => 'Nama barang minimal 3 karakter.',
+        'nama_barang.max' => 'Nama barang maksimal 100 karakter.',
+        'nomor_aset.required' => 'Nomor aset wajib diisi.',
+        'nomor_aset.min' => 'Nomor aset minimal 5 karakter.',
+        'nomor_aset.max' => 'Nomor aset maksimal 30 karakter.',
+        'tahun_perolehan.required' => 'Tahun perolehan wajib diisi.',
+        'tahun_perolehan.integer' => 'Tahun perolehan harus berupa angka.',
+        'tahun_perolehan.between' => 'Tahun perolehan harus berada di antara tahun 2000 dan 2026.',
+        'ruang_id.required' => 'Ruang laboratorium wajib dipilih.',
+        'ruang_id.exists' => 'Ruang laboratorium yang dipilih tidak tersedia.',
+    ]);
+
+    try {
+        $pdo = DB::connection()->getPdo();
+
+        $cekKonflik = $pdo->prepare(
+            'SELECT COUNT(*) FROM inventaris
+             WHERE (kode_barang = :kode_barang OR nomor_aset = :nomor_aset)
+               AND id <> :id'
+        );
+        $cekKonflik->execute([
+            'kode_barang' => $data['kode_barang'],
+            'nomor_aset' => $data['nomor_aset'],
+            'id' => $id,
+        ]);
+
+        if ((int) $cekKonflik->fetchColumn() > 0) {
+            return back()->withInput()->with(
+                'gagal',
+                'Kode barang atau nomor aset sudah digunakan inventaris lain.'
+            );
+        }
+
+        $ubah = $pdo->prepare(
+            'UPDATE inventaris
+             SET kode_barang = :kode_barang,
+                 nama_barang = :nama_barang,
+                 nomor_aset = :nomor_aset,
+                 tahun_perolehan = :tahun_perolehan,
+                 ruang_id = :ruang_id
+             WHERE id = :id'
+        );
+        $ubah->execute([
+            'kode_barang' => $data['kode_barang'],
+            'nama_barang' => $data['nama_barang'],
+            'nomor_aset' => $data['nomor_aset'],
+            'tahun_perolehan' => $data['tahun_perolehan'],
+            'ruang_id' => $data['ruang_id'],
+            'id' => $id,
+        ]);
+
+        return redirect()->route('inventaris.index')->with(
+            'berhasil',
+            'Data inventaris berhasil diperbarui.'
+        );
+    } catch (\Throwable $error) {
+        report($error);
+
+        return back()->withInput()->with(
+            'gagal',
+            'Data gagal diperbarui. Periksa koneksi dan data.'
+        );
+    }
+})->name('inventaris.update');
+
+Route::delete('/inventaris/{id}', function (int $id) {
+    try {
+        $pdo = DB::connection()->getPdo();
+        $hapus = $pdo->prepare('DELETE FROM inventaris WHERE id = :id');
+        $hapus->execute(['id' => $id]);
+
+        if ($hapus->rowCount() === 0) {
+            return redirect()->route('inventaris.index')->with(
+                'gagal',
+                'Data inventaris tidak ditemukan.'
+            );
+        }
+
+        return redirect()->route('inventaris.index')->with(
+            'berhasil',
+            'Data inventaris berhasil dihapus.'
+        );
+    } catch (\Throwable $error) {
+        report($error);
+
+        return redirect()->route('inventaris.index')->with(
+            'gagal',
+            'Data gagal dihapus. Periksa relasi atau koneksi.'
+        );
+    }
+})->name('inventaris.destroy');
+
 require __DIR__.'/settings.php';
